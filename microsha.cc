@@ -120,6 +120,80 @@ void getShortDirectory(string &path, string &shortDir) {
 }
 
 
+void redirections(vector<string> &inputVector, int fdlogs) {
+	int i = 0;
+	bool anythingChanged = false;
+	while (i < inputVector.size()) { //input has format "substr1>substr2 substr3", case if there is more than 1 sign '>'
+		anythingChanged = false;
+		int foundOutputRedirect = inputVector[i].find(outputRedirectSymbol);
+		int foundInputRedirect = inputVector[i].find(inputRedirectSymbol);
+		
+		/*string s = to_string(i);
+		write(fdlogs, "i = ", 4);
+		write(fdlogs, s.c_str(), s.length());
+		write(fdlogs, "\n", 1);*/
+		
+		if ((foundOutputRedirect != string::npos) || (foundInputRedirect != string::npos)) {
+			anythingChanged = true;
+			int pos = (foundOutputRedirect == string::npos) ? foundInputRedirect : foundOutputRedirect;
+			bool isOutput = (foundOutputRedirect == string::npos) ? false : true;
+			int j = i;
+			string substr1 = inputVector[j].substr(0, pos);
+			string substr2 = inputVector[j].substr(pos+1, inputVector[j].length()-pos-1);
+			bool substr3exists = (j == inputVector.size()-1)? false : true;
+			string substr3 = "";
+			if (substr3exists) substr3 = inputVector[j+1];
+			//cout << "i = " << i << ": " << substr1 << " " << substr2 << " " << substr3 << endl;
+			if (((substr1 != "0") && (substr1 != "") && (!isOutput)) || ((substr1 != "1") && (substr1 != "2") && (substr1 != "") && (isOutput))) {
+				inputVector.insert(inputVector.begin() + j, substr1);
+				substr1 = "";
+				j++; //making j point to a string with '>' sign
+			}
+			if (substr1 == "") {
+				substr1 = "0";
+				if (isOutput) substr1 = "1";
+			}  //by default it is 1 (stdout) or 0 (stdin)
+			if ((substr2.find(wildcardMetasymbol) != string::npos) || (substr2.find(anySymbolMetasymbol) != string::npos)) {
+				cout << substr2 << ": ambiguous redirect" << endl;
+				continue;
+			}
+			if ((substr2 == "") && (!substr3exists)) {
+				cout << "syntax error near unexpected token 'newline'" << endl;
+				continue;
+			}
+		
+			if (substr2 == "") {
+				substr2 = substr3;
+				inputVector.erase(inputVector.begin() + j+1);
+			}
+			inputVector.erase(inputVector.begin()+j);
+			
+			for (int l = 0; l < inputVector.size(); l++) {
+				write(fdlogs, inputVector[l].c_str(), inputVector[l].length());
+				write(fdlogs, "\n", 1);
+			}
+			
+			close(stoi(substr1));
+			int redirectionTo;
+			if (isOutput) {
+				redirectionTo = open(substr2.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+			} else {
+				redirectionTo = open(substr2.c_str(), O_RDONLY, 0666);
+			}
+			if (redirectionTo < 0) perror("open");
+			break;
+		}
+		i++;
+	}
+	for (int l = 0; l < inputVector.size(); l++) {
+		write(fdlogs, inputVector[l].c_str(), inputVector[l].length());
+		write(fdlogs, "\n", 1);
+	}
+	if (anythingChanged) redirections(inputVector, fdlogs);
+}
+
+
+
 class TwoStrings {
 public:
 	TwoStrings(string &header, string &mask) {
@@ -259,6 +333,7 @@ void complexFork(const vector< vector<char *> > &charVector, int commandNumber, 
 	return;
 }
 
+
 int main() {
 	
 	/* Redirecting stderr to file */
@@ -330,69 +405,11 @@ int main() {
 		int pid = fork();
 		if (pid < 0) perror("fork");
 		if (pid == 0) { // Only done by a child
-			int i = 0;
-			while (i < inputVector.size()) { //input has format "substr1>substr2 substr3", case if there is more than 1 sign '>'
-				int foundOutputRedirect = inputVector[i].find(outputRedirectSymbol);
-				int foundInputRedirect = inputVector[i].find(inputRedirectSymbol);
-				
-				/*string s = to_string(i);
-				write(fdlogs, "i = ", 4);
-				write(fdlogs, s.c_str(), s.length());
-				write(fdlogs, "\n", 1);*/
-				
-				if ((foundOutputRedirect != string::npos) || (foundInputRedirect != string::npos)) {
-					int pos = (foundOutputRedirect == string::npos) ? foundInputRedirect : foundOutputRedirect;
-					bool isOutput = (foundOutputRedirect == string::npos) ? false : true;
-					int j = i;
-					string substr1 = inputVector[j].substr(0, pos);
-					string substr2 = inputVector[j].substr(pos+1, inputVector[j].length()-pos-1);
-					bool substr3exists = (j == inputVector.size()-1)? false : true;
-					string substr3 = "";
-					if (substr3exists) substr3 = inputVector[j+1];
-					//cout << "i = " << i << ": " << substr1 << " " << substr2 << " " << substr3 << endl;
-					if (((substr1 != "0") && (substr1 != "") && (!isOutput)) || ((substr1 != "1") && (substr1 != "2") && (substr1 != "") && (isOutput))) {
-						inputVector.insert(inputVector.begin() + j, substr1);
-						substr1 = "";
-						j++; //making j point to a string with '>' sign
-					}
-					if (substr1 == "") {
-						substr1 = "0";
-						if (isOutput) substr1 = "1";
-					}  //by default it is 1 (stdout) or 0 (stdin)
-					if ((substr2.find(wildcardMetasymbol) != string::npos) || (substr2.find(anySymbolMetasymbol) != string::npos)) {
-						cout << substr2 << ": ambiguous redirect" << endl;
-						continue;
-					}
-					if ((substr2 == "") && (!substr3exists)) {
-						cout << "syntax error near unexpected token 'newline'" << endl;
-						continue;
-					}
-				
-					if (substr2 == "") {
-						substr2 = substr3;
-						inputVector.erase(inputVector.begin() + j+1);
-					}
-					inputVector.erase(inputVector.begin()+j);
-					
-					/*for (int l = 0; l < inputVector.size(); l++) {
-						write(fdlogs, inputVector[l].c_str(), inputVector[l].length());
-						write(fdlogs, "\n", 1);
-					}*/
-					
-					close(stoi(substr1));
-					int redirectionTo;
-					if (isOutput) {
-						redirectionTo = open(substr2.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
-					} else {
-						redirectionTo = open(substr2.c_str(), O_RDONLY, 0666);
-					}
-					if (redirectionTo < 0) perror("open");
-				}
-				i++;
-			}
+			redirections(inputVector, fdlogs);
 		} else {
 			wait(0);
 		}
+		
 		
 		/* Time */
 		if (pid == 0) {
@@ -474,7 +491,7 @@ int main() {
 			wait(0);
 		}
 		
-		/* System calls with pipeline*/	
+		/* System calls with pipeline */	
 		
 		if (pid == 0) { // Child
 			
