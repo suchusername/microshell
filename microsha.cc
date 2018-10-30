@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <algorithm>
 #include <vector>
 #include <string>
 #include <string.h>
@@ -15,15 +16,12 @@
 #include <fstream>
 using namespace std;
 
-const string HOMEDIRECTORY = "/Users/apple";
-const int HOMEDIR_DEPTH = 2;
 const string regularUserSymbol = ">";
 const string superUserSymbol = "!";
 const char anySymbolMetasymbol = '?';
 const char wildcardMetasymbol = '*';
 const char outputRedirectSymbol = '>';
 const char inputRedirectSymbol = '<';
-const int BUF_SIZE = 400;
 
 void parse(string &str, vector<string> &parsedStr) {
 	int i = 0;
@@ -37,7 +35,7 @@ void parse(string &str, vector<string> &parsedStr) {
 	return; 
 }
 
-int changeDirectory(string &cdPath, string &oldPath, string &newPath, int curDepth) { // Finds new directory path and depth
+int changeDirectory(string &cdPath, string &oldPath, string &newPath, int curDepth, string &HOMEDIRECTORY, int HOMEDIR_DEPTH) { // Finds new directory path and depth
 	if (cdPath.length() == 0) {
 		newPath = HOMEDIRECTORY;
 		return HOMEDIR_DEPTH;
@@ -185,10 +183,10 @@ void redirections(vector<string> &inputVector, int fdlogs) {
 		}
 		i++;
 	}
-	for (int l = 0; l < inputVector.size(); l++) {
+	/*for (int l = 0; l < inputVector.size(); l++) {
 		write(fdlogs, inputVector[l].c_str(), inputVector[l].length());
 		write(fdlogs, "\n", 1);
-	}
+	}*/
 	if (anythingChanged) redirections(inputVector, fdlogs);
 }
 
@@ -334,7 +332,7 @@ void complexFork(const vector< vector<char *> > &charVector, int commandNumber, 
 }
 
 
-int main() {
+int main() {	
 	
 	/* Redirecting stderr to file */
 	close(2);
@@ -344,6 +342,12 @@ int main() {
 	if (fdlogs < 0) perror("open");
 	
 	/* Preparing the directory */
+	char* HOMEDIRECTORY_ENV = getenv("HOME");
+	string HOMEDIRECTORY = string(HOMEDIRECTORY_ENV);
+	size_t HOMEDIR_DEPTH_1 = count(HOMEDIRECTORY.begin(), HOMEDIRECTORY.end(), '/');
+	int HOMEDIR_DEPTH = (int) HOMEDIR_DEPTH_1;
+	if (HOMEDIRECTORY == "/") HOMEDIR_DEPTH = 0;
+	
 	struct stat st;
 	if (stat(HOMEDIRECTORY.c_str(), &st) < 0) { // initializing stat structure
 		perror(HOMEDIRECTORY.c_str());
@@ -380,7 +384,7 @@ int main() {
 			vector<string> pathVector;
 			string cdPath = (inputVector.size() > 1) ? inputVector[1] : "~";
 			string newPath; // new directory of successful
-			int newDepth = changeDirectory(cdPath, currentDirectory, newPath, currentDirectoryDepth);
+			int newDepth = changeDirectory(cdPath, currentDirectory, newPath, currentDirectoryDepth, HOMEDIRECTORY, HOMEDIR_DEPTH);
 			if (stat(newPath.c_str(), &st) < 0) {
 				perror("stat");
 				cout << newPath << ": Not a directory." << endl;
