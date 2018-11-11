@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/dir.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -24,15 +25,32 @@ const char outputRedirectSymbol = '>';
 const char inputRedirectSymbol = '<';
 
 void parse(string &str, vector<string> &parsedStr) {
-	int i = 0;
-	while ((i < str.length()) && ((str[i] == ' ') || (str[i] == '\t'))) i++;
+	int i = 1;
+	while ((i < str.length()) && ((str[i] == ' ') || (str[i] == '\t'))) i++; 
 	while (i < str.length()) {
 		int startIndex = i;
-		while ((i < str.length()) && ((str[i] != ' ') && (str[i] != '\t'))) i++;
+		//while ((i < str.length()) && ((str[i] != ' ') && (str[i] != '\t'))) i++;
+		while (1) {
+			if ((i < str.length()) && (str[i] != ' ') && (str[i] != '\t')) {
+				i++;
+				continue;
+			} else if (str[i-1] == 92) { // 92 - backslash - to allow for directories with spaces
+				str.erase(i-1,1);
+			} else {
+				break;
+			}
+		}
 		parsedStr.push_back(str.substr(startIndex, i - startIndex));
 		while ((i < str.length()) && ((str[i] == ' ') || (str[i] == '\t'))) i++;
 	}
 	return; 
+}
+
+void sigfunc(int signo) {
+	switch (signo) {
+		case SIGINT: cout << "You pressed Ctrl+C.\n";
+		case SIGQUIT: cout << "You tried to quit.\n";
+	}
 }
 
 int changeDirectory(string &cdPath, string &oldPath, string &newPath, int curDepth, string &HOMEDIRECTORY, int HOMEDIR_DEPTH) { // Finds new directory path and depth
@@ -138,6 +156,7 @@ void redirections(vector<string> &inputVector, int fdlogs) {
 			int j = i;
 			string substr1 = inputVector[j].substr(0, pos);
 			string substr2 = inputVector[j].substr(pos+1, inputVector[j].length()-pos-1);
+			
 			bool substr3exists = (j == inputVector.size()-1)? false : true;
 			string substr3 = "";
 			if (substr3exists) substr3 = inputVector[j+1];
@@ -151,13 +170,22 @@ void redirections(vector<string> &inputVector, int fdlogs) {
 				substr1 = "0";
 				if (isOutput) substr1 = "1";
 			}  //by default it is 1 (stdout) or 0 (stdin)
-			if ((substr2.find(wildcardMetasymbol) != string::npos) || (substr2.find(anySymbolMetasymbol) != string::npos)) {
-				cout << substr2 << ": ambiguous redirect" << endl;
-				continue;
-			}
 			if ((substr2 == "") && (!substr3exists)) {
-				cout << "syntax error near unexpected token 'newline'" << endl;
-				continue;
+				string _text = "syntax error near unexpected token 'newline'\n";
+				write(2, _text.c_str(), _text.length());
+				return;
+			}
+			
+			if (substr3exists && (substr3[0] == '>')) {
+				string _text = "syntax error near unexpected token '>'\n";
+				write(2, _text.c_str(), _text.length());
+				return;
+			}
+			
+			if (substr3exists && (substr3[0] == '<')) {
+				string _text = "syntax error near unexpected token '<'\n";
+				write(2, _text.c_str(), _text.length());
+				return;
 			}
 		
 			if (substr2 == "") {
@@ -305,7 +333,10 @@ private:
 void complexFork(const vector< vector<char *> > &charVector, int commandNumber, int numberOfCommands, int parentPid, int fdlogs) {
 	if (commandNumber == numberOfCommands) { // process running 1st program
 		if (execvp(charVector[numberOfCommands - commandNumber][0], &charVector[numberOfCommands - commandNumber][0]) < 0) { //1st command
-			perror("execvp");
+			write(2, charVector[numberOfCommands - commandNumber][0], strlen(charVector[numberOfCommands - commandNumber][0]));
+			string _text = ": command not found\n";
+			write(2, _text.c_str(), _text.length());
+			//perror("execvp");
 			_exit(0);
 		}
 		return;		
@@ -324,15 +355,122 @@ void complexFork(const vector< vector<char *> > &charVector, int commandNumber, 
 		close(fd[1]);
 		int fd_0 = dup(fd[0]);
 		if (execvp(charVector[numberOfCommands - commandNumber][0], &charVector[numberOfCommands - commandNumber][0]) < 0) {
-			perror("execvp");
+			write(2, charVector[numberOfCommands - commandNumber][0], strlen(charVector[numberOfCommands - commandNumber][0]));
+			string _text = ": command not found\n";
+			write(2, _text.c_str(), _text.length());
+			//perror("execvp");
 			_exit(0);
 		}
 	}
 	return;
 }
 
+void metasymbols(string &pattern_arg, vector<string> &inputVector, string &currentDirectory, string &path, int i) {
+	//cout << "pattern = " << pattern << endl;
+	//cout << "curdir = " << currentDirectory << endl;
+	//cout << "path = " << path << endl;
+	string pattern = pattern_arg;
+	int slashpos = pattern.find("/");
+	string subpattern;
+	vector<string> recursiveCall;
+	struct stat _st;
+	stat(currentDirectory.c_str(), &_st);
+	
+	if (pattern == "") {
+		inputVector.insert(inputVector.begin() + i, path);
+		return;
+	} 
+	if (pattern == "/") {
+		string _arg2 = path + "/";
+		if (S_ISDIR(_st.st_mode)) inputVector.insert(inputVector.begin() + i, _arg2);
+		return;
+	} 
+	if (!S_ISDIR(_st.st_mode)) return;
+	
+	
+	if (slashpos == string::npos) {
+		subpattern = pattern;
+		pattern = "";
+	} else {
+		subpattern = pattern.substr(0, slashpos);
+		pattern.erase(0, slashpos);
+	}
+	if (pattern != "") pattern.erase(0,1);
+	//cout << "pattern = " << pattern << endl;
+	//cout << "subpattern = " << subpattern << endl;
+	
+	if ((subpattern != ".") && (subpattern != "..")) {	
+		
+		DIR *curDir_dir = opendir(currentDirectory.c_str());
+		if (curDir_dir == NULL) {
+			string _text = currentDirectory + ": unable to open file or directory\n";
+			write(2, _text.c_str(), _text.length());
+			return;
+		}
+		for (dirent *de = readdir(curDir_dir); de != NULL; de = readdir(curDir_dir)) {
+			string de_string = string(de->d_name);
+			struct stat st;
+			stat(de_string.c_str(), &st);
+			if (de_string == ".") continue;
+			if (de_string == "..") continue;
+			if (de_string[0] == '.') continue; // to avoid files like .DS_Store
+
+			TwoStrings toMatch(de_string, subpattern);
+			//int z = (toMatch.match()) ? 1 : 0;
+			//cout << de_string << " " << pattern << " " << z << " " << endl;
+			if (toMatch.match()) {
+				//cout << "matched: " << de_string << endl;
+				recursiveCall.push_back(de_string);
+			}
+		}
+		closedir(curDir_dir);
+		
+		sort(recursiveCall.begin(), recursiveCall.end(), greater<string>());
+		
+		for (int j = 0; j < recursiveCall.size(); j++) {
+			string _arg1 = currentDirectory;
+			if (currentDirectory != "/") _arg1 += "/";
+			_arg1 += recursiveCall[j];
+			string _arg2 = path;
+			if (path != "") {
+				_arg2 += "/";
+			}
+			_arg2 += recursiveCall[j];
+			
+			//cout << "pattern: " << pattern << ", curdir: " << _arg1 << ", path: " << _arg2 << endl;
+
+			metasymbols(pattern, inputVector, _arg1, _arg2, i);
+		}
+		
+	} else if (subpattern == ".") {
+		string _arg2 = path;
+		if (path != "") {
+			_arg2 += "/";
+		}
+		_arg2 += ".";
+		metasymbols(pattern, inputVector, currentDirectory, _arg2, i);
+		return;
+	} else { // can't process ".." patterns yet
+		string _arg1 = currentDirectory;
+		string _arg2 = path;
+		int lastslash = _arg1.rfind('/');
+		_arg1 = _arg1.substr(0, lastslash);
+		if (_arg1 == "") _arg1 = "/";
+		if (path != "") {
+			_arg2 += "/";
+		}
+		_arg2 += "..";
+		metasymbols(pattern, inputVector, _arg1, _arg2, i);
+		return;
+	}
+}
+
 
 int main() {	
+	
+	/* Setting up signals */
+	signal(SIGINT, sigfunc);
+	signal(SIGQUIT, sigfunc);
 	
 	/* Redirecting stderr to file */
 	close(2);
@@ -372,12 +510,42 @@ int main() {
 		vector<string> inputVector;
 		cout << currentDirectoryShort << " " << userSymbol << " ";
 		getline(cin, inputString);
+		inputString = " " + inputString;
 		parse(inputString, inputVector);
 		
 		/* Exit */
 		if (inputVector.size() > 0 && inputVector[0] == "exit") {
 			return 0;
 		}		
+		
+		/* Metasymbols * and ? */
+		for (int i = 0; i < inputVector.size(); i++) {
+			int foundWildcard = inputVector[i].find(wildcardMetasymbol);
+			int foundAnySymbol = inputVector[i].find(anySymbolMetasymbol);
+			if ((foundWildcard != string::npos) || (foundAnySymbol != string::npos)) {
+				
+				string pattern = inputVector[i];
+				inputVector.erase(inputVector.begin() + i);
+				
+				for (;;) { // deleting repeating slashes
+					int j = pattern.find("//");
+					if (j != string::npos) {
+						pattern.erase(j+1, 1);
+					} else {
+						break;
+					}
+				}
+				
+				string _arg1 = currentDirectory; //
+				string _arg2 = ""; // placeholders
+				if (pattern[0] == '/') {
+					pattern.erase(0,1);
+					_arg1 = "/";
+					_arg2 = "/";
+				} 
+				metasymbols(pattern, inputVector, _arg1, _arg2, i);
+			}
+		}
 		
 		/* Change directory */		
 		if (inputVector.size() > 0 && inputVector[0] == "cd") {
@@ -406,6 +574,7 @@ int main() {
 		
 		
 		/* Input/Output redirection */
+		
 		int pid = fork();
 		if (pid < 0) perror("fork");
 		if (pid == 0) { // Only done by a child
@@ -460,40 +629,6 @@ int main() {
 			wait(0);
 		}
 		
-		/* Metasymbols * and ? */
-		if (pid == 0) {
-			for (int i = 0; i < inputVector.size(); i++) {
-				int foundWildcard = inputVector[i].find(wildcardMetasymbol);
-				int foundAnySymbol = inputVector[i].find(anySymbolMetasymbol);
-				if ((foundWildcard != string::npos) || (foundAnySymbol != string::npos)) {
-					string pattern = inputVector[i];
-					inputVector.erase(inputVector.begin() + i);
-					curDir_dir = opendir(currentDirectory.c_str());
-					bool flag = false;
-					for (dirent *de = readdir(curDir_dir); de != NULL; de = readdir(curDir_dir)) {
-						string de_string = string(de->d_name);
-						struct stat st;
-						stat(de_string.c_str(), &st);
-						if (de_string == ".") continue;
-						if (de_string == "..") continue;
-						if (!S_ISDIR(st.st_mode)) {
-							TwoStrings toMatch(de_string, pattern);
-							//int z = (toMatch.match()) ? 1 : 0;
-							//cout << de_string << " " << pattern << " " << z << " " << endl;
-							if (toMatch.match()) {
-								inputVector.insert(inputVector.begin() + i, de_string);
-								flag = true;
-							} 
-						}
-					}
-					if (!flag) i--;
-					//inputVector[i] = substitute; 
-					//cout << "sub: " << substitute << endl;
-				}
-			}
-		} else {
-			wait(0);
-		}
 		
 		/* System calls with pipeline */	
 		
