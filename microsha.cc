@@ -3,6 +3,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <sys/dir.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -24,6 +25,15 @@ const char wildcardMetasymbol = '*';
 const char outputRedirectSymbol = '>';
 const char inputRedirectSymbol = '<';
 
+/*bool SIGNALED = false;
+
+void sigfunc(int signo) {
+	if (signo == SIGINT) {
+		SIGNALED = true;
+		return;
+	}
+}*/
+
 void parse(string &str, vector<string> &parsedStr) {
 	int i = 1;
 	while ((i < str.length()) && ((str[i] == ' ') || (str[i] == '\t'))) i++; 
@@ -44,13 +54,6 @@ void parse(string &str, vector<string> &parsedStr) {
 		while ((i < str.length()) && ((str[i] == ' ') || (str[i] == '\t'))) i++;
 	}
 	return; 
-}
-
-void sigfunc(int signo) {
-	switch (signo) {
-		case SIGINT: cout << "You pressed Ctrl+C.\n";
-		case SIGQUIT: cout << "You tried to quit.\n";
-	}
 }
 
 int changeDirectory(string &cdPath, string &oldPath, string &newPath, int curDepth, string &HOMEDIRECTORY, int HOMEDIR_DEPTH) { // Finds new directory path and depth
@@ -407,7 +410,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			write(2, _text.c_str(), _text.length());
 			return;
 		}
-		for (dirent *de = readdir(curDir_dir); de != NULL; de = readdir(curDir_dir)) {
+		for (dirent *de = readdir(curDir_dir); (de != NULL); de = readdir(curDir_dir)) { //In case a SIGINT signal is received
 			string de_string = string(de->d_name);
 			struct stat st;
 			stat(de_string.c_str(), &st);
@@ -450,7 +453,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 		_arg2 += ".";
 		metasymbols(pattern, inputVector, currentDirectory, _arg2, i);
 		return;
-	} else { // can't process ".." patterns yet
+	} else { // ".." pattern
 		string _arg1 = currentDirectory;
 		string _arg2 = path;
 		int lastslash = _arg1.rfind('/');
@@ -469,8 +472,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 int main() {	
 	
 	/* Setting up signals */
-	signal(SIGINT, sigfunc);
-	signal(SIGQUIT, sigfunc);
+	signal(SIGINT, SIG_IGN); // parent ignores both signals
 	
 	/* Redirecting stderr to file */
 	close(2);
@@ -498,7 +500,7 @@ int main() {
 	DIR *curDir_dir = opendir(currentDirectory.c_str());
 	if (chdir(currentDirectory.c_str()) < 0) perror("chdir");
 	
-	/* Determining user priveleges */
+	/* Determining user privileges */
 	string userSymbol = regularUserSymbol;
 	uid_t uid = getuid();
 	if (uid == 0) userSymbol = superUserSymbol;
@@ -510,7 +512,14 @@ int main() {
 		vector<string> inputVector;
 		cout << currentDirectoryShort << " " << userSymbol << " ";
 		getline(cin, inputString);
-		inputString = " " + inputString;
+		if (cin.eof() && (inputString.length() == 0)) { // Managing EOF
+			string _text = "Reached EOF with no input.\n";
+			write(2, _text.c_str(), _text.length());
+			cout << endl;
+			break;
+		}
+		inputString = " " + inputString; // Adding a leading space to an inputString because it will be removed anyway by parse() function but it allows
+										 // to avoid checking whether first character is a space or not
 		parse(inputString, inputVector);
 		
 		/* Exit */
@@ -572,14 +581,16 @@ int main() {
 			continue;
 		}
 		
-		
 		/* Input/Output redirection */
 		
 		int pid = fork();
 		if (pid < 0) perror("fork");
 		if (pid == 0) { // Only done by a child
+			signal(SIGINT, SIG_DFL); // child reacts to SIGINT, because originally it inherits the pointer to parent's signal function
 			redirections(inputVector, fdlogs);
 		} else {
+			//signal(SIGINT, sigfunc_parent); 
+			//cout << "child = " << pid << endl;
 			wait(0);
 		}
 		
@@ -669,6 +680,9 @@ int main() {
 				_exit(0);
 			}*/
 		} else { // Parent
+			//int status;
+			//wait(&status);
+			//cout << status << endl;
 			wait(0);
 		}
 	}
