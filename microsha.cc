@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <sys/time.h>
+#include <time.h>
 #include <algorithm>
 #include <vector>
 #include <string>
@@ -25,14 +26,14 @@ const char wildcardMetasymbol = '*';
 const char outputRedirectSymbol = '>';
 const char inputRedirectSymbol = '<';
 
-/*bool SIGNALED = false;
+bool SIGNALED = false;
 
 void sigfunc(int signo) {
 	if (signo == SIGINT) {
 		SIGNALED = true;
 		return;
 	}
-}*/
+}
 
 void parse(string &str, vector<string> &parsedStr) {
 	int i = 1;
@@ -411,6 +412,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			return;
 		}
 		for (dirent *de = readdir(curDir_dir); (de != NULL); de = readdir(curDir_dir)) { //In case a SIGINT signal is received
+			if (SIGNALED) return;
 			string de_string = string(de->d_name);
 			struct stat st;
 			stat(de_string.c_str(), &st);
@@ -427,6 +429,8 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			}
 		}
 		closedir(curDir_dir);
+		
+		if (SIGNALED) return;
 		
 		sort(recursiveCall.begin(), recursiveCall.end(), greater<string>());
 		
@@ -470,9 +474,8 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 
 
 int main() {	
-	
 	/* Setting up signals */
-	signal(SIGINT, SIG_IGN); // parent ignores both signals
+	signal(SIGINT, sigfunc); // parent ignores both signals
 	
 	/* Redirecting stderr to file */
 	close(2);
@@ -509,6 +512,7 @@ int main() {
 	string inputString;
 	
 	for (;;) {
+		SIGNALED = false;
 		vector<string> inputVector;
 		cout << currentDirectoryShort << " " << userSymbol << " ";
 		getline(cin, inputString);
@@ -518,6 +522,7 @@ int main() {
 			cout << endl;
 			break;
 		}
+		if (cin.eof()) return 0;
 		inputString = " " + inputString; // Adding a leading space to an inputString because it will be removed anyway by parse() function but it allows
 										 // to avoid checking whether first character is a space or not
 		parse(inputString, inputVector);
@@ -555,12 +560,14 @@ int main() {
 				metasymbols(pattern, inputVector, _arg1, _arg2, i);
 			}
 		}
+		if (SIGNALED) continue;
 		
 		/* Change directory */		
 		if (inputVector.size() > 0 && inputVector[0] == "cd") {
 			vector<string> pathVector;
 			string cdPath = (inputVector.size() > 1) ? inputVector[1] : "~";
 			string newPath; // new directory of successful
+			if (SIGNALED) continue;
 			int newDepth = changeDirectory(cdPath, currentDirectory, newPath, currentDirectoryDepth, HOMEDIRECTORY, HOMEDIR_DEPTH);
 			if (stat(newPath.c_str(), &st) < 0) {
 				perror("stat");
@@ -574,12 +581,14 @@ int main() {
 			}
 			continue;
 		}
-		
+		if (SIGNALED) continue;
+	
 		/* Print working directory */		
 		if (inputVector.size() > 0 && inputVector[0] == "pwd") {
 			cout << currentDirectory << endl;
 			continue;
 		}
+		if (SIGNALED) continue;
 		
 		/* Input/Output redirection */
 		
@@ -593,53 +602,69 @@ int main() {
 			//cout << "child = " << pid << endl;
 			wait(0);
 		}
-		
+		if (SIGNALED) continue;
 		
 		/* Time */
 		if (pid == 0) {
 			if ((inputVector.size() > 0) && (inputVector[0] == "time")) {
-				struct rusage r_usage;
-				struct timeval sys_start, sys_end, u_start, u_end;
+				struct rusage r_usage, rr_usage;
+				struct timeval sys_start, sys_end, u_start, u_end, real_start, real_end;
 				vector<char *> placeholder;
 				for (int j = 1; j < inputVector.size(); j++) {
 					placeholder.push_back((char *)inputVector[j].c_str());
 				}
 				placeholder.push_back(NULL);
-				getrusage(RUSAGE_SELF, &r_usage);
-				sys_start = r_usage.ru_stime;
-				u_start = r_usage.ru_utime;
+				pid_t parent_pid = getpid();
 				pid_t newpid = fork();
 				if (newpid < 0) perror("fork");
 				if (newpid == 0) {
+					//kill(parent_pid, SIGUSR1); // SIGUSR1 is user-defined signal, signalling parent to start timing
 					if (execvp(placeholder[0], &placeholder[0]) < 0) {
 						perror("execvp");
 						_exit(0);
 					}
 				} else {
-					wait(0);
-					getrusage(RUSAGE_SELF, &r_usage);
-					sys_end = r_usage.ru_stime;
-					u_end = r_usage.ru_utime;
+					signal(SIGINT, SIG_IGN); // not reacting to Ctrl+C
+					//sigsuspend(NULL); //waiting for child's signal
+					//cout << "hi" << endl;
+					gettimeofday(&real_start, NULL);
+					getrusage(RUSAGE_CHILDREN, &r_usage);
+					wait(0); //waiting for child to die
+					getrusage(RUSAGE_CHILDREN, &rr_usage);
+					gettimeofday(&real_end, NULL);
+					sys_start = r_usage.ru_stime;
+					u_start = r_usage.ru_utime;
+					sys_end = rr_usage.ru_stime;
+					u_end = rr_usage.ru_utime;
 					long int sys_sec = sys_end.tv_sec - sys_start.tv_sec;
-					long int sys_usec = sys_end.tv_usec - sys_start.tv_usec;
+					long int sys_usec = (sys_end.tv_usec - sys_start.tv_usec) / 1000;
 					if (sys_usec < 0) {
 						sys_usec = 1000 - sys_usec;
 						sys_sec++;
 					}
 					long int u_sec = u_end.tv_sec - u_start.tv_sec;
-					long int u_usec = u_end.tv_usec - u_start.tv_usec;
+					long int u_usec = (u_end.tv_usec - u_start.tv_usec) / 1000;
 					if (u_usec < 0) {
 						u_usec = 1000 - u_usec;
 						u_sec++;
 					}
-					printf("sys     %ld.%lds\n", sys_sec, sys_usec);
-					printf("user    %ld.%lds\n", u_sec, u_usec);
+					long int real_sec = real_end.tv_sec - real_start.tv_sec;
+					long int real_usec = (real_end.tv_usec - real_start.tv_usec) / 1000;
+					if (real_usec < 0) {
+						real_usec = 1000 - real_usec;
+						real_sec++;
+					}
+					printf("\n");
+					printf("real	%ld.%03lds\n", real_sec, real_usec);
+					printf("user    %ld.%03lds\n", u_sec, u_usec);
+					printf("sys     %ld.%03lds\n", sys_sec, sys_usec);
 				}
+				_exit(0);
 			}
 		} else {
 			wait(0);
 		}
-		
+		if (SIGNALED) continue;
 		
 		/* System calls with pipeline */	
 		
