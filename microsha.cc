@@ -369,7 +369,7 @@ void complexFork(const vector< vector<char *> > &charVector, int commandNumber, 
 	return;
 }
 
-void metasymbols(string &pattern_arg, vector<string> &inputVector, string &currentDirectory, string &path, int i) {
+void metasymbols(string &pattern_arg, vector<string> &inputVector, string &currentDirectory, string &path, int i, bool &anythingMatched) {
 	//cout << "pattern = " << pattern << endl;
 	//cout << "curdir = " << currentDirectory << endl;
 	//cout << "path = " << path << endl;
@@ -381,6 +381,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 	stat(currentDirectory.c_str(), &_st);
 	
 	if (pattern == "") {
+		anythingMatched = true;
 		inputVector.insert(inputVector.begin() + i, path);
 		return;
 	} 
@@ -446,7 +447,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			
 			//cout << "pattern: " << pattern << ", curdir: " << _arg1 << ", path: " << _arg2 << endl;
 
-			metasymbols(pattern, inputVector, _arg1, _arg2, i);
+			metasymbols(pattern, inputVector, _arg1, _arg2, i, anythingMatched);
 		}
 		
 	} else if (subpattern == ".") {
@@ -455,7 +456,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			_arg2 += "/";
 		}
 		_arg2 += ".";
-		metasymbols(pattern, inputVector, currentDirectory, _arg2, i);
+		metasymbols(pattern, inputVector, currentDirectory, _arg2, i, anythingMatched);
 		return;
 	} else { // ".." pattern
 		string _arg1 = currentDirectory;
@@ -467,7 +468,7 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			_arg2 += "/";
 		}
 		_arg2 += "..";
-		metasymbols(pattern, inputVector, _arg1, _arg2, i);
+		metasymbols(pattern, inputVector, _arg1, _arg2, i, anythingMatched);
 		return;
 	}
 }
@@ -539,6 +540,7 @@ int main() {
 			if ((foundWildcard != string::npos) || (foundAnySymbol != string::npos)) {
 				
 				string pattern = inputVector[i];
+				string _pattern(pattern);
 				inputVector.erase(inputVector.begin() + i);
 				
 				for (;;) { // deleting repeating slashes
@@ -557,7 +559,9 @@ int main() {
 					_arg1 = "/";
 					_arg2 = "/";
 				} 
-				metasymbols(pattern, inputVector, _arg1, _arg2, i);
+				bool anythingMatched = false;
+				metasymbols(pattern, inputVector, _arg1, _arg2, i, anythingMatched);
+				if (!anythingMatched) inputVector.insert(inputVector.begin() + i, _pattern);
 			}
 		}
 		if (SIGNALED) continue;
