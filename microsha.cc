@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <fnmatch.h>
 #include <sys/dir.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -420,11 +421,11 @@ void metasymbols(string &pattern_arg, vector<string> &inputVector, string &curre
 			if (de_string == ".") continue;
 			if (de_string == "..") continue;
 			if (de_string[0] == '.') continue; // to avoid files like .DS_Store
-
-			TwoStrings toMatch(de_string, subpattern);
-			//int z = (toMatch.match()) ? 1 : 0;
-			//cout << de_string << " " << pattern << " " << z << " " << endl;
-			if (toMatch.match()) {
+		
+			//TwoStrings toMatch(de_string, subpattern);
+			//int z = (!fnmatch(subpattern.c_str(), de_string.c_str(), 0)) ? 1 : 0; // returns 0 on success
+			//cout << de_string << " " << subpattern << " " << z << " " << endl;
+			if (!fnmatch(subpattern.c_str(), de_string.c_str(), 0)) {
 				//cout << "matched: " << de_string << endl;
 				recursiveCall.push_back(de_string);
 			}
